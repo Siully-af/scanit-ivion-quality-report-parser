@@ -1,9 +1,6 @@
 services:
   - type: web
     name: scanit-ivion-quality-report-parser
-    env: python
+    env: docker
     plan: free
-    buildCommand: |
-      apt-get update && apt-get install -y tesseract-ocr
-      pip install -r requirements.txt
-    startCommand: python main.py
+    dockerfilePath: ./Dockerfile
