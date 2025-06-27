@@ -3,6 +3,5 @@ services:
     name: scanit-ivion-quality-report-parser
     env: docker
     plan: free
-    branch: main
     autoDeploy: true
-    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
