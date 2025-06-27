@@ -1,64 +1,46 @@
 from flask import Flask, request, jsonify
 import requests
-import fitz  # PyMuPDF
 import pytesseract
+import fitz  # PyMuPDF
 from PIL import Image
 from io import BytesIO
 import re
-from datetime import datetime
 
 app = Flask(__name__)
 
-def download_file(url):
+def extract_text_from_pdf_url(url):
     response = requests.get(url)
-    response.raise_for_status()
-    return response.content
+    with BytesIO(response.content) as file:
+        doc = fitz.open(stream=file.read(), filetype="pdf")
+        text = "\n".join(page.get_text() for page in doc)
+        return text
 
-def extract_text_from_pdf(pdf_bytes):
-    text = ""
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text()
-    return text
-
-def extract_text_from_image(image_bytes):
-    image = Image.open(BytesIO(image_bytes))
-    return pytesseract.image_to_string(image)
-
-def extract_field(text, label, type="string"):
-    pattern = rf"{re.escape(label)}\s*[:\-]?\s*(.+)"
-    match = re.search(pattern, text, re.IGNORECASE)
+def extract_field(text, label, type="text"):
+    pattern = rf"{label}:\s*(.+)"
+    match = re.search(pattern, text)
     if not match:
         return None
     raw = match.group(1).strip()
-
     if type == "number":
-        raw = raw.replace(",", "").replace("ft²", "").replace("m²", "").replace("GB", "").strip()
-        try:
-            return float(raw)
-        except ValueError:
-            return None
-    elif type == "duration":
-        return parse_duration(raw)
-    elif type == "date":
-        return parse_date(raw)
-    else:
-        return raw
+        raw = raw.replace(",", "")
+        if "m²" in raw:
+            return round(float(raw.replace("m²", "")) * 10.7639, 2)
+        if "ft²" in raw:
+            return float(raw.replace("ft²", ""))
+        if "GB" in raw:
+            return float(raw.replace("GB", ""))
+        return float(raw)
+    if type == "select":
+        return {"name": raw}
+    if type == "coordinate":
+        return None if raw.strip().upper() == "XRAY MAPS" else raw
+    return raw
 
-def parse_date(date_str):
-    try:
-        # Try parsing format like "27/06/2025 03:42 PM"
-        dt = datetime.strptime(date_str, "%d/%m/%Y %I:%M %p")
-        return dt.isoformat()
-    except ValueError:
-        return None
-
-def parse_duration(duration_str):
-    try:
-        h, m, s = duration_str.strip().split(":")
-        return int(h) * 3600 + int(m) * 60 + int(s)
-    except:
-        return None
+def extract_table_row(screenshot_text, dataset_name):
+    for line in screenshot_text.splitlines():
+        if dataset_name in line:
+            return line
+    return ""
 
 @app.route("/parse", methods=["POST"])
 def parse():
@@ -68,39 +50,45 @@ def parse():
         screenshot_url = data["screenshot_url"]
         dataset_name = data["dataset_name"]
 
-        # Download and process PDF
-        pdf_bytes = download_file(pdf_url)
-        pdf_text = extract_text_from_pdf(pdf_bytes)
+        pdf_text = extract_text_from_pdf_url(pdf_url)
+        screenshot_img = Image.open(BytesIO(requests.get(screenshot_url).content))
+        screenshot_text = pytesseract.image_to_string(screenshot_img)
+        row_text = extract_table_row(screenshot_text, dataset_name)
 
-        # Download and OCR screenshot
-        screenshot_bytes = download_file(screenshot_url)
-        screenshot_text = extract_text_from_image(screenshot_bytes)
-
-        result = {
+        response = {
             "Dataset name": dataset_name,
-            "Recorded at": extract_field(pdf_text, "Recorded at", type="date"),
-            "Duration": extract_field(pdf_text, "Duration", type="duration"),
-            "Processed at": extract_field(pdf_text, "Processed at", type="date"),
+            "Recorded at": extract_field(pdf_text, "Recorded at"),
+            "Duration": int(float(extract_field(pdf_text, "Duration").split()[0]) * 60),
+            "Processed at": extract_field(pdf_text, "Processed at"),
             "Scanned area": extract_field(pdf_text, "Scanned area", type="number"),
             "Billed area": extract_field(pdf_text, "Billed area", type="number"),
             "Panoramas": extract_field(pdf_text, "Panoramas", type="number"),
             "Control points": extract_field(pdf_text, "Control points", type="number"),
-            "Point cloud resolution": { "name": extract_field(pdf_text, "Point cloud resolution") },
-            "Colorized": { "name": extract_field(pdf_text, "Colorized") },
+            "Point cloud resolution": extract_field(pdf_text, "Point cloud resolution", type="select"),
+            "Colorized": extract_field(pdf_text, "Colorized", type="select"),
             "Processing preset": extract_field(pdf_text, "Processing preset selection"),
-            "Person blurring": { "name": extract_field(pdf_text, "Person blurring") },
-            "License Plate blurring": { "name": extract_field(pdf_text, "License Plate blurring") },
-            "Floor filling": { "name": extract_field(pdf_text, "Floor filling") },
-            "Panorama embedded e57": { "name": extract_field(pdf_text, "Panorama embedded e57") },
-            "Surveyed control points": { "name": extract_field(pdf_text, "Surveyed control points") },
-            "Coordinate system": extract_field(pdf_text, "Coordinate system") if "MAPS" not in extract_field(pdf_text, "Coordinate system", "string") else "",
-            "Units consumed": extract_field(screenshot_text, dataset_name + " Units consumed", type="number"),
-            "Size": extract_field(screenshot_text, dataset_name + " Size", type="number"),
+            "Person blurring": extract_field(pdf_text, "Person blurring", type="select"),
+            "License Plate blurring": extract_field(pdf_text, "License Plate blurring", type="select"),
+            "Floor filling": extract_field(pdf_text, "Floor filling", type="select"),
+            "Panorama embedded e57": extract_field(pdf_text, "Panorama embedded e57", type="select"),
+            "Surveyed control points": extract_field(pdf_text, "Surveyed control points", type="select"),
+            "Coordinate system": extract_field(pdf_text, "Coordinate system", type="coordinate"),
+            "Units consumed": extract_field(pdf_text, "Units consumed", type="number"),
+            "Size": extract_field(pdf_text, "Size", type="number"),
+            "Device serial": extract_field(pdf_text, "Device serial"),
+            "System software": extract_field(pdf_text, "System software")
         }
 
-        return jsonify(result)
+        # From screenshot row — extract these if needed (in future)
+        # row_parts = row_text.split()
+        # response.update({
+        #     "Some field": row_parts[2]
+        # })
+
+        return jsonify(response)
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(debug=True, port=10000)
