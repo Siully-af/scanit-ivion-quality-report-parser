@@ -1,6 +1,5 @@
-
-Flask
-requests
-pytesseract
-PyMuPDF
-pillow
+Flask==2.3.3
+requests==2.31.0
+pytesseract==0.3.10
+PyMuPDF==1.23.9
+Pillow==10.3.0
