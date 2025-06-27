@@ -1,94 +1,86 @@
 from flask import Flask, request, jsonify
 import requests
-import pytesseract
 import fitz  # PyMuPDF
+import pytesseract
 from PIL import Image
-from io import BytesIO
+import io
 import re
 
 app = Flask(__name__)
 
-def extract_text_from_pdf_url(url):
+def extract_text_from_pdf(url):
     response = requests.get(url)
-    with BytesIO(response.content) as file:
-        doc = fitz.open(stream=file.read(), filetype="pdf")
-        text = "\n".join(page.get_text() for page in doc)
-        return text
+    doc = fitz.open(stream=response.content, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
 
-def extract_field(text, label, type="text"):
-    pattern = rf"{label}:\s*(.+)"
-    match = re.search(pattern, text)
-    if not match:
-        return None
-    raw = match.group(1).strip()
-    if type == "number":
-        raw = raw.replace(",", "")
-        if "m²" in raw:
-            return round(float(raw.replace("m²", "")) * 10.7639, 2)
-        if "ft²" in raw:
-            return float(raw.replace("ft²", ""))
-        if "GB" in raw:
-            return float(raw.replace("GB", ""))
-        return float(raw)
-    if type == "select":
-        return {"name": raw}
-    if type == "coordinate":
-        return None if raw.strip().upper() == "XRAY MAPS" else raw
-    return raw
+def extract_text_from_image(url):
+    response = requests.get(url)
+    image = Image.open(io.BytesIO(response.content))
+    return pytesseract.image_to_string(image)
 
-def extract_table_row(screenshot_text, dataset_name):
-    for line in screenshot_text.splitlines():
-        if dataset_name in line:
-            return line
-    return ""
+def extract_field(text, label, type="string"):
+    pattern = rf"{re.escape(label)}\s*[:\-]?\s*(.+)"
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        raw = match.group(1).strip()
+        if type == "number":
+            cleaned = re.sub(r"[^\d.,]", "", raw).replace(",", "")
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return raw
+    return None
 
 @app.route("/parse", methods=["POST"])
 def parse():
+    data = request.get_json()
+    pdf_url = data.get("pdf_url")
+    screenshot_url = data.get("screenshot_url")
+    dataset_name = data.get("dataset_name")
+
+    if not pdf_url or not screenshot_url or not dataset_name:
+        return jsonify({"error": "Missing required fields"}), 400
+
     try:
-        data = request.json
-        pdf_url = data["pdf_url"]
-        screenshot_url = data["screenshot_url"]
-        dataset_name = data["dataset_name"]
+        pdf_text = extract_text_from_pdf(pdf_url)
+        screenshot_text = extract_text_from_image(screenshot_url)
 
-        pdf_text = extract_text_from_pdf_url(pdf_url)
-        screenshot_img = Image.open(BytesIO(requests.get(screenshot_url).content))
-        screenshot_text = pytesseract.image_to_string(screenshot_img)
-        row_text = extract_table_row(screenshot_text, dataset_name)
-
-        response = {
+        result = {
             "Dataset name": dataset_name,
             "Recorded at": extract_field(pdf_text, "Recorded at"),
-            "Duration": int(float(extract_field(pdf_text, "Duration").split()[0]) * 60),
+            "Duration": extract_field(pdf_text, "Duration", type="number"),
             "Processed at": extract_field(pdf_text, "Processed at"),
             "Scanned area": extract_field(pdf_text, "Scanned area", type="number"),
             "Billed area": extract_field(pdf_text, "Billed area", type="number"),
             "Panoramas": extract_field(pdf_text, "Panoramas", type="number"),
             "Control points": extract_field(pdf_text, "Control points", type="number"),
-            "Point cloud resolution": extract_field(pdf_text, "Point cloud resolution", type="select"),
-            "Colorized": extract_field(pdf_text, "Colorized", type="select"),
+            "Point cloud resolution": {"name": extract_field(pdf_text, "Point cloud resolution")},
+            "Colorized": {"name": extract_field(pdf_text, "Colorized")},
             "Processing preset": extract_field(pdf_text, "Processing preset selection"),
-            "Person blurring": extract_field(pdf_text, "Person blurring", type="select"),
-            "License Plate blurring": extract_field(pdf_text, "License Plate blurring", type="select"),
-            "Floor filling": extract_field(pdf_text, "Floor filling", type="select"),
-            "Panorama embedded e57": extract_field(pdf_text, "Panorama embedded e57", type="select"),
-            "Surveyed control points": extract_field(pdf_text, "Surveyed control points", type="select"),
-            "Coordinate system": extract_field(pdf_text, "Coordinate system", type="coordinate"),
+            "Person blurring": {"name": extract_field(pdf_text, "Person blurring")},
+            "License Plate blurring": {"name": extract_field(pdf_text, "License Plate blurring")},
+            "Floor filling": {"name": extract_field(pdf_text, "Floor filling")},
+            "Panorama embedded e57": {"name": extract_field(pdf_text, "Panorama embedded e57")},
+            "Surveyed control points": {"name": extract_field(pdf_text, "Surveyed control points")},
+            "Coordinate system": None if extract_field(pdf_text, "Coordinate system") == "XRAY MAPS" else extract_field(pdf_text, "Coordinate system"),
             "Units consumed": extract_field(pdf_text, "Units consumed", type="number"),
             "Size": extract_field(pdf_text, "Size", type="number"),
             "Device serial": extract_field(pdf_text, "Device serial"),
             "System software": extract_field(pdf_text, "System software")
         }
 
-        # From screenshot row — extract these if needed (in future)
-        # row_parts = row_text.split()
-        # response.update({
-        #     "Some field": row_parts[2]
-        # })
+        # Try extracting fallback values from screenshot if missing
+        for key in ["Size", "Units consumed", "Processing preset"]:
+            if not result.get(key):
+                result[key] = extract_field(screenshot_text, key if key != "Processing preset" else "Processing preset selection", type="number" if key != "Processing preset" else "string")
 
-        return jsonify(response)
-
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True, port=10000)
+    app.run(debug=True, host="0.0.0.0", port=10000)
