@@ -15,7 +15,7 @@ def extract_field(text, label, type="text", allow_xray=False):
         return None
 
     raw = match.group(1).strip()
-    
+
     if type == "number":
         try:
             return float(
@@ -43,18 +43,26 @@ def extract_field(text, label, type="text", allow_xray=False):
     return raw
 
 def extract_pdf_text(url):
-    response = requests.get(url)
-    with BytesIO(response.content) as f:
-        doc = fitz.open(stream=f, filetype="pdf")
-        text = ""
-        for page in doc:
-            text += page.get_text()
-    return text
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        with BytesIO(response.content) as f:
+            doc = fitz.open(stream=f, filetype="pdf")
+            text = ""
+            for page in doc:
+                text += page.get_text()
+        return text
+    except Exception as e:
+        raise RuntimeError(f"Failed to extract PDF text: {str(e)}")
 
 def extract_image_text(url):
-    response = requests.get(url)
-    image = Image.open(BytesIO(response.content))
-    return pytesseract.image_to_string(image)
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content))
+        return pytesseract.image_to_string(image)
+    except Exception as e:
+        raise RuntimeError(f"Failed to extract image text: {str(e)}")
 
 @app.route("/parse", methods=["POST"])
 def parse():
@@ -65,17 +73,16 @@ def parse():
         dataset_name = body.get("dataset_name")
 
         if not pdf_url or not screenshot_url or not dataset_name:
-            return jsonify({ "error": "Missing required input URLs or dataset name" }), 400
+            return jsonify({ "error": "Missing input URLs or dataset name" }), 400
 
         pdf_text = extract_pdf_text(pdf_url)
         image_text = extract_image_text(screenshot_url)
 
         if dataset_name not in image_text:
-            print(f"❌ Dataset not found in screenshot: {dataset_name}")
             return jsonify({ "error": f"Dataset {dataset_name} not found in screenshot" }), 400
 
+        # --- Parse from PDF ---
         output = {
-            # --- From PDF ---
             "Dataset name": dataset_name,
             "Recorded at": extract_field(pdf_text, "Recorded at"),
             "Duration": extract_field(pdf_text, "Duration", type="duration"),
@@ -95,21 +102,27 @@ def parse():
             "Coordinate system": extract_field(pdf_text, "Coordinate system", type="coordinate"),
             "Device serial": extract_field(pdf_text, "Device serial"),
             "System software": extract_field(pdf_text, "System software"),
-
-            # --- From screenshot ---
-            "Units consumed": extract_field(image_text, dataset_name + " Units consumed", type="number"),
-            "Size": extract_field(image_text, dataset_name + " Size", type="number"),
         }
 
-        # Check required fields
-        required = ["Dataset name", "Recorded at", "Duration", "Processed at", "Scanned area"]
-        if any(output[f] is None for f in required):
-            return jsonify({ "error": "Missing required fields" }), 400
+        # --- Parse from screenshot ---
+        image_units = extract_field(image_text, dataset_name + " Units consumed", type="number")
+        image_size = extract_field(image_text, dataset_name + " Size", type="number")
+
+        if image_units is not None:
+            output["Units consumed"] = image_units
+        if image_size is not None:
+            output["Size"] = image_size
+
+        # --- Validation ---
+        required_fields = ["Dataset name", "Recorded at", "Duration", "Processed at", "Scanned area"]
+        missing = [f for f in required_fields if output.get(f) is None]
+        if missing:
+            return jsonify({ "error": "Missing required fields", "missing": missing }), 400
 
         return jsonify(output)
 
     except Exception as e:
-        print("🔥 Error in /parse:", str(e))
+        print("🔥 Internal error:", str(e))
         return jsonify({ "error": str(e) }), 500
 
 @app.route("/", methods=["GET"])
