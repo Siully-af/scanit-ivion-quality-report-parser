@@ -71,6 +71,7 @@ def extract_field(text, label, field_type="text"):
     return raw
 
 def extract_dataset_name(pdf_text: str) -> Optional[str]:
+    logger.info(f"Extracted dataset name: '{dataset_name}'")
     """
     Attempt to extract a dataset name from the PDF text.
     Tries several patterns based on known naming formats.
