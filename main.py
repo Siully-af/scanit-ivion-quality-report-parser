@@ -94,8 +94,15 @@ def parse():
     dataset_name = extract_dataset_name_from_filename(pdf_filename)
     logger.info(f"Extracted dataset name: '{dataset_name}'")
 
-    if not dataset_name or dataset_name.lower() not in image_text.lower():
-        return jsonify({"error": f"Dataset '{dataset_name}' not found in screenshot"}), 400
+    def normalize(text):
+    return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
+
+    if not dataset_name or normalize(dataset_name) not in normalize(image_text):
+        return jsonify({
+        "error": f"Dataset '{dataset_name}' not found in screenshot",
+        "normalized_dataset": normalize(dataset_name),
+        "normalized_image_text_sample": normalize(image_text)[:200]
+    }), 400
 
     output = {
         "Dataset name": dataset_name,
