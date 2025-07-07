@@ -70,9 +70,25 @@ def extract_field(text, label, field_type="text"):
         return {"name": raw}
     return raw
 
-def extract_dataset_name(pdf_text):
-    match = re.search(r'Dataset Name:\s*(.+)', pdf_text)
-    return match.group(1).strip() if match else None
+def extract_dataset_name(pdf_text: str) -> Optional[str]:
+    """
+    Attempt to extract a dataset name from the PDF text.
+    Tries several patterns based on known naming formats.
+    """
+    patterns = [
+        r'Dataset Name:\s*(.+)',  # exact label match
+        r'Dataset:\s*(.+)',       # alternative label
+        r'Project Name:\s*(.+)',  # sometimes it's labeled like this
+        r'([A-Z]{2,5}-\d{5}[-_ ]\d{2}-\d{2}-\d{2})',  # pattern like IPX-25002_00-00-01
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, pdf_text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+    logger.warning("Could not find dataset name in PDF text.")
+    return None
+
 
 @app.route("/parse", methods=["POST"])
 def parse():
