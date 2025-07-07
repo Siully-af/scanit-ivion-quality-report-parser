@@ -97,7 +97,6 @@ def parse():
 def normalize(text):
     return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
 
-
     if not dataset_name or normalize(dataset_name) not in normalize(image_text):
         return jsonify({
         "error": f"Dataset '{dataset_name}' not found in screenshot",
