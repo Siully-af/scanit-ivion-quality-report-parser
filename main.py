@@ -94,7 +94,7 @@ def parse():
     dataset_name = extract_dataset_name_from_filename(pdf_filename)
     logger.info(f"Extracted dataset name: '{dataset_name}'")
 
-  def normalize(text):
+def normalize(text):
     return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
 
 
