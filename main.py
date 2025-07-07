@@ -70,26 +70,12 @@ def extract_field(text, label, field_type="text"):
         return {"name": raw}
     return raw
 
-def extract_dataset_name(pdf_text: str) -> Optional[str]:
-    logger.info(f"Extracted dataset name: '{dataset_name}'")
-    """
-    Attempt to extract a dataset name from the PDF text.
-    Tries several patterns based on known naming formats.
-    """
-    patterns = [
-        r'Dataset Name:\s*(.+)',  # exact label match
-        r'Dataset:\s*(.+)',       # alternative label
-        r'Project Name:\s*(.+)',  # sometimes it's labeled like this
-        r'([A-Z]{2,5}-\d{5}[-_ ]\d{2}-\d{2}-\d{2})',  # pattern like IPX-25002_00-00-01
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, pdf_text, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-
-    logger.warning("Could not find dataset name in PDF text.")
-    return None
-
+def extract_dataset_name_from_filename(filename):
+    name_part = filename.replace("_quality_report.pdf", "").strip()
+    match = re.search(r'(IPX[-_ ]?\d{5}[-_ ]?\d{2}-\d{2}-\d{2})$', name_part)
+    if match:
+        return match.group(1).replace(" ", "").strip()
+    return name_part.split(" - ")[-1].strip()
 
 @app.route("/parse", methods=["POST"])
 def parse():
@@ -97,14 +83,17 @@ def parse():
     data = request.get_json()
     pdf_url = data.get("pdf_url")
     screenshot_url = data.get("screenshot_url")
+    pdf_filename = data.get("pdf_filename")
 
-    if not pdf_url or not screenshot_url:
-        return jsonify({"error": "Missing pdf_url or screenshot_url"}), 400
+    if not pdf_url or not screenshot_url or not pdf_filename:
+        return jsonify({"error": "Missing pdf_url, screenshot_url, or pdf_filename"}), 400
 
     pdf_text = extract_pdf_text(pdf_url)
     image_text = extract_image_text(screenshot_url)
 
-    dataset_name = extract_dataset_name(pdf_text)
+    dataset_name = extract_dataset_name_from_filename(pdf_filename)
+    logger.info(f"Extracted dataset name: '{dataset_name}'")
+
     if not dataset_name or dataset_name.lower() not in image_text.lower():
         return jsonify({"error": f"Dataset '{dataset_name}' not found in screenshot"}), 400
 
