@@ -85,9 +85,9 @@ def extract_units_and_size(image_text: str, dataset_name: str):
     for line in image_text.splitlines():
         if normalized_dataset in normalize(line):
             parts = re.split(r'\s{2,}|\t+', line.strip())
-            if len(parts) >= 3:
-                units = re.sub(r'[^\d]', '', parts[1]) if parts[1] else None
-                size_match = re.match(r'([\d.]+)', parts[2])
+            if len(parts) >= 8:
+                units = re.sub(r'[^\d]', '', parts[6]) if parts[6] else None
+                size_match = re.search(r'([\d.]+)', parts[7])
                 size = size_match.group(1) if size_match else None
                 return (float(units) if units else None, float(size) if size else None)
     return (None, None)
