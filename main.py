@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-REQUEST_TIMEOUT = 30
-MAX_FILE_SIZE = 50 * 1024 * 1024
+REQUEST_TIMEOUT = 30  # seconds
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 ALLOWED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/tiff', 'image/bmp'}
 
 def handle_errors(f):
@@ -64,11 +64,8 @@ def extract_field(text, label, field_type="text"):
         raw = re.sub(r'[^\d.]', '', raw)
         return float(raw) if raw else None
     elif field_type == "duration":
-        try:
-            h, m, s = map(int, raw.split(':'))
-            return h * 3600 + m * 60 + s
-        except:
-            return None
+        h, m, s = map(int, raw.split(':'))
+        return h * 3600 + m * 60 + s
     elif field_type == "select":
         return {"name": raw}
     return raw
@@ -84,22 +81,25 @@ def normalize(text):
     return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
 
 def extract_units_and_size(image_text: str, dataset_name: str):
-    normalized_target = normalize(dataset_name)
-    lines = image_text.splitlines()
+    normalized_dataset = normalize(dataset_name)
+    rows = image_text.splitlines()
 
-    for line in lines:
-        norm_line = normalize(line)
-        if normalized_target in norm_line or normalized_target.replace("-", "") in norm_line:
-            parts = re.split(r'\s{2,}|\t+', line.strip())
-            logger.info(f"Matched OCR row: {parts}")
-            if len(parts) >= 8:
-                try:
-                    units = float(parts[6].replace(',', '').strip())
-                    size = float(parts[7].strip().replace('GB', '').strip())
-                    return units, size
-                except Exception as e:
-                    logger.warning(f"Failed to parse units/size: {e}")
-    logger.warning(f"No matching row for dataset '{dataset_name}' found in screenshot")
+    for line in rows:
+        if normalized_dataset in normalize(line):
+            logger.info(f"Matched row for {dataset_name}: {line}")
+
+            units_match = re.search(r'(\d{1,3}(?:,\d{3})+)', line)
+            size_match = re.search(r'([0-9]*\.?[0-9]+)\s*GB', line, re.IGNORECASE)
+
+            try:
+                units = float(units_match.group(1).replace(",", "")) if units_match else None
+                size = float(size_match.group(1)) if size_match else None
+                return units, size
+            except Exception as e:
+                logger.warning(f"Regex parse error for line: {line} — {e}")
+                return None, None
+
+    logger.warning(f"Dataset '{dataset_name}' not found or improperly formatted in screenshot OCR")
     return None, None
 
 @app.route("/parse", methods=["POST"])
@@ -118,6 +118,13 @@ def parse():
 
     dataset_name = extract_dataset_name_from_filename(pdf_filename)
     logger.info(f"Extracted dataset name: '{dataset_name}'")
+
+    if not dataset_name or normalize(dataset_name) not in normalize(image_text):
+        return jsonify({
+            "error": f"Dataset '{dataset_name}' not found in screenshot",
+            "normalized_dataset": normalize(dataset_name),
+            "normalized_image_text_sample": normalize(image_text)[:200]
+        }), 400
 
     units_consumed, size = extract_units_and_size(image_text, dataset_name)
 
