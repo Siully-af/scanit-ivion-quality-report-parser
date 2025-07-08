@@ -84,11 +84,12 @@ def extract_units_and_size(image_text: str, dataset_name: str):
     normalized_dataset = normalize(dataset_name)
     for line in image_text.splitlines():
         if normalized_dataset in normalize(line):
-            match = re.search(r'Units consumed\s*(\d+[\d,]*)', line)
-            units = re.sub(r'[^\d]', '', match.group(1)) if match else None
-            match2 = re.search(r'Size\s*([\d.]+\s*GB)', line, re.IGNORECASE)
-            size = match2.group(1).replace("GB", "").strip() if match2 else None
-            return (float(units) if units else None, float(size) if size else None)
+            parts = re.split(r'\s{2,}|\t+', line.strip())
+            if len(parts) >= 3:
+                units = re.sub(r'[^\d]', '', parts[1]) if parts[1] else None
+                size_match = re.match(r'([\d.]+)', parts[2])
+                size = size_match.group(1) if size_match else None
+                return (float(units) if units else None, float(size) if size else None)
     return (None, None)
 
 @app.route("/parse", methods=["POST"])
@@ -110,10 +111,10 @@ def parse():
 
     if not dataset_name or normalize(dataset_name) not in normalize(image_text):
         return jsonify({
-        "error": f"Dataset '{dataset_name}' not found in screenshot",
-        "normalized_dataset": normalize(dataset_name),
-        "normalized_image_text_sample": normalize(image_text)[:200]
-    }), 400
+            "error": f"Dataset '{dataset_name}' not found in screenshot",
+            "normalized_dataset": normalize(dataset_name),
+            "normalized_image_text_sample": normalize(image_text)[:200]
+        }), 400
 
     units_consumed, size = extract_units_and_size(image_text, dataset_name)
 
