@@ -82,15 +82,22 @@ def normalize(text):
 
 def extract_units_and_size(image_text: str, dataset_name: str):
     normalized_dataset = normalize(dataset_name)
-    for line in image_text.splitlines():
+    rows = image_text.splitlines()
+
+    for line in rows:
         if normalized_dataset in normalize(line):
             parts = re.split(r'\s{2,}|\t+', line.strip())
             if len(parts) >= 8:
-                units = re.sub(r'[^\d]', '', parts[6]) if parts[6] else None
-                size_match = re.search(r'([\d.]+)', parts[7])
-                size = size_match.group(1) if size_match else None
-                return (float(units) if units else None, float(size) if size else None)
-    return (None, None)
+                try:
+                    units_str = parts[6].replace(',', '').strip()
+                    size_str = parts[7].strip().upper().replace('GB', '').strip()
+                    units = float(units_str) if units_str else None
+                    size = float(size_str) if size_str else None
+                    return units, size
+                except Exception as e:
+                    logger.error(f"Parsing error in units/size: {e}")
+                    return None, None
+    return None, None
 
 @app.route("/parse", methods=["POST"])
 def parse():
