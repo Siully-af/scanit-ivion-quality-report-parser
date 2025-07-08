@@ -80,6 +80,17 @@ def extract_dataset_name_from_filename(filename):
 def normalize(text):
     return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
 
+def extract_units_and_size(image_text: str, dataset_name: str):
+    normalized_dataset = normalize(dataset_name)
+    for line in image_text.splitlines():
+        if normalized_dataset in normalize(line):
+            match = re.search(r'Units consumed\s*(\d+[\d,]*)', line)
+            units = re.sub(r'[^\d]', '', match.group(1)) if match else None
+            match2 = re.search(r'Size\s*([\d.]+\s*GB)', line, re.IGNORECASE)
+            size = match2.group(1).replace("GB", "").strip() if match2 else None
+            return (float(units) if units else None, float(size) if size else None)
+    return (None, None)
+
 @app.route("/parse", methods=["POST"])
 def parse():
     start_time = time.time()
@@ -97,14 +108,14 @@ def parse():
     dataset_name = extract_dataset_name_from_filename(pdf_filename)
     logger.info(f"Extracted dataset name: '{dataset_name}'")
 
-    
-
     if not dataset_name or normalize(dataset_name) not in normalize(image_text):
         return jsonify({
         "error": f"Dataset '{dataset_name}' not found in screenshot",
         "normalized_dataset": normalize(dataset_name),
         "normalized_image_text_sample": normalize(image_text)[:200]
     }), 400
+
+    units_consumed, size = extract_units_and_size(image_text, dataset_name)
 
     output = {
         "Dataset name": dataset_name,
@@ -126,8 +137,8 @@ def parse():
         "Coordinate system": extract_field(pdf_text, "Coordinate system"),
         "Device serial": extract_field(pdf_text, "Device serial"),
         "System software": extract_field(pdf_text, "System software"),
-        "Units consumed": extract_field(image_text, "Units consumed", "number"),
-        "Size": extract_field(image_text, "Size", "number"),
+        "Units consumed": units_consumed,
+        "Size": size,
     }
 
     missing = [k for k, v in output.items() if v is None]
