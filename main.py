@@ -1,7 +1,5 @@
 from flask import Flask, request, jsonify
 import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
 import requests
 from io import BytesIO
 import re
@@ -20,7 +18,7 @@ app = Flask(__name__)
 
 REQUEST_TIMEOUT = 30  # seconds
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-ALLOWED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/tiff', 'image/bmp'}
+
 
 def handle_errors(f):
     @wraps(f)
@@ -35,8 +33,10 @@ def handle_errors(f):
             raise
     return decorated_function
 
+
 def validate_url(url: str) -> bool:
     return url.startswith('http://') or url.startswith('https://')
+
 
 @handle_errors
 def extract_pdf_text(url: str) -> str:
@@ -47,28 +47,29 @@ def extract_pdf_text(url: str) -> str:
         text = "".join(page.get_text() for page in doc)
     return text
 
-@handle_errors
-def extract_image_text(url: str) -> str:
-    response = requests.get(url, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
-    image = Image.open(BytesIO(response.content)).convert('RGB')
-    return pytesseract.image_to_string(image, config='--oem 3 --psm 6')
 
 def extract_field(text, label, field_type="text"):
-    pattern = rf"{re.escape(label)}:\s*(.+?)(?:\n|$)"
+    pattern = rf"{re.escape(label)}:?\s*(.+?)(?:\n|$)"
     match = re.search(pattern, text, re.IGNORECASE)
     if not match:
         return None
     raw = match.group(1).strip()
     if field_type == "number":
-        raw = re.sub(r'[^\d.]', '', raw)
-        return float(raw) if raw else None
+        raw = re.sub(r'[^\d.,]', '', raw).replace(',', '')
+        try:
+            return float(raw)
+        except:
+            return None
     elif field_type == "duration":
-        h, m, s = map(int, raw.split(':'))
-        return h * 3600 + m * 60 + s
+        try:
+            h, m, s = map(int, raw.split(':'))
+            return h * 3600 + m * 60 + s
+        except:
+            return None
     elif field_type == "select":
         return {"name": raw}
     return raw
+
 
 def extract_dataset_name_from_filename(filename):
     name_part = filename.replace("_quality_report.pdf", "").strip()
@@ -77,56 +78,20 @@ def extract_dataset_name_from_filename(filename):
         return match.group(1).replace(" ", "").strip()
     return name_part.split(" - ")[-1].strip()
 
-def normalize(text):
-    return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
-
-def extract_units_and_size(image_text: str, dataset_name: str):
-    normalized_dataset = normalize(dataset_name)
-    rows = image_text.splitlines()
-
-    for line in rows:
-        if normalized_dataset in normalize(line):
-            logger.info(f"Matched row for {dataset_name}: {line}")
-
-            units_match = re.search(r'(\d{1,3}(?:,\d{3})+)', line)
-            size_match = re.search(r'([0-9]*\.?[0-9]+)\s*GB', line, re.IGNORECASE)
-
-            try:
-                units = float(units_match.group(1).replace(",", "")) if units_match else None
-                size = float(size_match.group(1)) if size_match else None
-                return units, size
-            except Exception as e:
-                logger.warning(f"Regex parse error for line: {line} — {e}")
-                return None, None
-
-    logger.warning(f"Dataset '{dataset_name}' not found or improperly formatted in screenshot OCR")
-    return None, None
 
 @app.route("/parse", methods=["POST"])
 def parse():
     start_time = time.time()
     data = request.get_json()
     pdf_url = data.get("pdf_url")
-    screenshot_url = data.get("screenshot_url")
     pdf_filename = data.get("pdf_filename")
 
-    if not pdf_url or not screenshot_url or not pdf_filename:
-        return jsonify({"error": "Missing pdf_url, screenshot_url, or pdf_filename"}), 400
+    if not pdf_url or not pdf_filename:
+        return jsonify({"error": "Missing pdf_url or pdf_filename"}), 400
 
     pdf_text = extract_pdf_text(pdf_url)
-    image_text = extract_image_text(screenshot_url)
-
     dataset_name = extract_dataset_name_from_filename(pdf_filename)
     logger.info(f"Extracted dataset name: '{dataset_name}'")
-
-    if not dataset_name or normalize(dataset_name) not in normalize(image_text):
-        return jsonify({
-            "error": f"Dataset '{dataset_name}' not found in screenshot",
-            "normalized_dataset": normalize(dataset_name),
-            "normalized_image_text_sample": normalize(image_text)[:200]
-        }), 400
-
-    units_consumed, size = extract_units_and_size(image_text, dataset_name)
 
     output = {
         "Dataset name": dataset_name,
@@ -147,9 +112,7 @@ def parse():
         "Surveyed control points": extract_field(pdf_text, "Surveyed control points", "select"),
         "Coordinate system": extract_field(pdf_text, "Coordinate system"),
         "Device serial": extract_field(pdf_text, "Device serial"),
-        "System software": extract_field(pdf_text, "System software"),
-        "Units consumed": units_consumed,
-        "Size": size,
+        "System software": extract_field(pdf_text, "System software")
     }
 
     missing = [k for k, v in output.items() if v is None]
@@ -158,6 +121,7 @@ def parse():
 
     logger.info(f"Processed '{dataset_name}' in {time.time() - start_time:.2f}s")
     return jsonify(output)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
