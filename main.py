@@ -77,23 +77,6 @@ def extract_dataset_name_from_filename(filename):
         return match.group(1).replace(" ", "").strip()
     return name_part.split(" - ")[-1].strip()
 
-@app.route("/parse", methods=["POST"])
-def parse():
-    start_time = time.time()
-    data = request.get_json()
-    pdf_url = data.get("pdf_url")
-    screenshot_url = data.get("screenshot_url")
-    pdf_filename = data.get("pdf_filename")
-
-    if not pdf_url or not screenshot_url or not pdf_filename:
-        return jsonify({"error": "Missing pdf_url, screenshot_url, or pdf_filename"}), 400
-
-    pdf_text = extract_pdf_text(pdf_url)
-    image_text = extract_image_text(screenshot_url)
-
-    dataset_name = extract_dataset_name_from_filename(pdf_filename)
-    logger.info(f"Extracted dataset name: '{dataset_name}'")
-
 def normalize(text):
     return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
 
@@ -114,12 +97,14 @@ def parse():
     dataset_name = extract_dataset_name_from_filename(pdf_filename)
     logger.info(f"Extracted dataset name: '{dataset_name}'")
 
+    
+
     if not dataset_name or normalize(dataset_name) not in normalize(image_text):
         return jsonify({
-            "error": f"Dataset '{dataset_name}' not found in screenshot",
-            "normalized_dataset": normalize(dataset_name),
-            "normalized_image_text_sample": normalize(image_text)[:200]
-        }), 400
+        "error": f"Dataset '{dataset_name}' not found in screenshot",
+        "normalized_dataset": normalize(dataset_name),
+        "normalized_image_text_sample": normalize(image_text)[:200]
+    }), 400
 
     output = {
         "Dataset name": dataset_name,
@@ -151,3 +136,6 @@ def parse():
 
     logger.info(f"Processed '{dataset_name}' in {time.time() - start_time:.2f}s")
     return jsonify(output)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
