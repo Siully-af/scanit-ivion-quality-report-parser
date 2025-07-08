@@ -117,7 +117,7 @@ def parse():
         "Control points": extract_field(pdf_text, "Control points", "number"),
         "Point cloud resolution": extract_field(pdf_text, "Point cloud resolution", "select"),
         "Colorized": extract_field(pdf_text, "Colorized", "select"),
-        "Processing preset": extract_field(pdf_text, "Processing preset selection"),
+        "Processing preset": extract_field(pdf_text, "Processing preset", "text"),
         "Person blurring": extract_field(pdf_text, "Person blurring", "select"),
         "License Plate blurring": extract_field(pdf_text, "License Plate blurring", "select"),
         "Floor filling": extract_field(pdf_text, "Floor filling", "select"),
@@ -126,8 +126,8 @@ def parse():
         "Coordinate system": extract_field(pdf_text, "Coordinate system"),
         "Device serial": extract_field(pdf_text, "Device serial"),
         "System software": extract_field(pdf_text, "System software"),
-        "Units consumed": extract_field(image_text, f"{dataset_name} Units consumed", "number"),
-        "Size": extract_field(image_text, f"{dataset_name} Size", "number"),
+        "Units consumed": extract_field(image_text, "Units consumed", "number"),
+        "Size": extract_field(image_text, "Size", "number"),
     }
 
     missing = [k for k, v in output.items() if v is None]
